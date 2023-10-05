@@ -1,0 +1,22 @@
+[package]
+name = "mdict"
+version = "0.1.12"
+edition = "2021"
+description = "Rust implement mdict"
+authors = ["zang.loo"]
+homepage = "https://github.com/zangloo/mdict"
+repository = "https://github.com/zangloo/mdict.git"
+keywords = ["mdict"]
+license = "GPL-2.0-only"
+readme = "README.md"
+
+[dependencies]
+thiserror = "1.0"
+byteorder = "1.4"
+adler32 = "1.2"
+encoding_rs = "0.8"
+regex = "1.8"
+ripemd = "0.1"
+compress = "0.2"
+salsa20 = "0.10"
+minilzo = "0.2"
