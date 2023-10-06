@@ -20,6 +20,5 @@ mod tests {
 		assert!(definition.is_some());
 		let definition = mdx.lookup("無").unwrap();
 		assert!(definition.is_some());
-		let definition = definition.unwrap();
 	}
 }

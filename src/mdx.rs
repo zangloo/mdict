@@ -68,9 +68,9 @@ impl Mdx {
 		lookup_record(self, word)
 	}
 
-	pub fn get_resource(&self, path: &str) -> Result<String>
+	pub fn get_resource(&self, path: &str) -> Result<Vec<u8>>
 	{
 		let path = self.cwd.join(path);
-		Ok(fs::read_to_string(path)?)
+		Ok(fs::read(path)?)
 	}
 }
