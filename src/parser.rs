@@ -1,7 +1,7 @@
 use adler32::RollingAdler32;
 use byteorder::{ByteOrder, ReadBytesExt, BE, LE};
 use compress::zlib;
-use encoding_rs::{Encoding, UTF_16LE};
+use encoding_rs::{Encoding, UTF_16LE, UTF_8};
 use regex::Regex;
 use ripemd::{Digest, Ripemd128, Ripemd128Core};
 use salsa20::cipher::crypto_common::Output;
@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
-use crate::mdx::{BlockEntryInfo, KeyBlock, KeyEntry, Reader, RecordOffset, WordDefinition};
+use crate::mdx::{BlockEntryInfo, KeyBlock, KeyEntry, Mode, Reader, RecordOffset, WordDefinition};
 use crate::{Error, Mdx, Result};
 
 #[derive(Debug)]
@@ -81,7 +81,7 @@ fn check_adler32(data: &[u8], checksum: u32) -> Result<()> {
     Ok(())
 }
 
-fn read_header(reader: &mut Reader) -> Result<Header> {
+fn read_header(reader: &mut Reader, mode: Mode) -> Result<Header> {
     let bytes = reader.read_u32::<BE>()?;
     let info_buf = read_buf(reader, bytes as usize)?;
     let checksum = reader.read_u32::<LE>()?;
@@ -112,10 +112,16 @@ fn read_header(reader: &mut Reader) -> Result<Header> {
         })
         .unwrap_or(0);
 
-    let encoding = if let Some(encoding) = attrs.get("Encoding") {
-        Encoding::for_label(encoding.as_bytes()).ok_or(Error::InvalidEncoding(encoding.clone()))?
-    } else {
-        encoding_rs::UTF_8
+    let encoding = match mode {
+        Mode::Mdd => UTF_16LE,
+        Mode::Mdx => {
+            if let Some(encoding) = attrs.get("Encoding") {
+                Encoding::for_label(encoding.as_bytes())
+                    .ok_or(Error::InvalidEncoding(encoding.clone()))?
+            } else {
+                encoding_rs::UTF_8
+            }
+        }
     };
     Ok(Header {
         version,
@@ -314,13 +320,10 @@ fn decode_block(slice: &[u8], compressed_size: usize, decompressed_size: usize) 
 }
 
 fn read_key_blocks(
-    reader: &mut Reader,
-    size: usize,
+    data: Vec<u8>,
     header: &Header,
     entry_infos: Vec<BlockEntryInfo>,
 ) -> Result<Vec<KeyBlock>> {
-    let data = read_buf(reader, size)?;
-
     let mut blocks = vec![];
     let mut slice = data.as_slice();
     for info in entry_infos {
@@ -335,18 +338,35 @@ fn read_key_blocks(
                 Version::V2 => (BE::read_u64(entries_slice) as usize, 8),
             };
             entries_slice = &entries_slice[delta..];
-            let idx = entries_slice
-                .iter()
-                .position(|b| *b == 0)
-                .ok_or(Error::InvalidData)?;
-            let text = header.encoding.decode(&entries_slice[..idx]).0;
-            let idx = idx + 1;
-
-            entries.push(KeyEntry {
-                offset,
-                text: text.to_string(),
-            });
-            entries_slice = &entries_slice[idx..];
+            if header.encoding == UTF_8 {
+                let idx = entries_slice
+                    .iter()
+                    .position(|b| *b == 0)
+                    .ok_or(Error::InvalidData)?;
+                let text = header.encoding.decode(&entries_slice[..idx]).0;
+                entries.push(KeyEntry {
+                    offset,
+                    text: text.to_string(),
+                });
+                let idx = idx + 1;
+                entries_slice = &entries_slice[idx..];
+            } else {
+                let mut idx = 0;
+                while idx + 1 < entries_slice.len() {
+                    if entries_slice[idx] == 0 && entries_slice[idx + 1] == 0 {
+                        break;
+                    } else {
+                        idx += 2;
+                    }
+                }
+                let text = header.encoding.decode(&entries_slice[..idx]).0;
+                entries.push(KeyEntry {
+                    offset,
+                    text: text.to_string(),
+                });
+                let idx = idx + 2;
+                entries_slice = &entries_slice[idx..];
+            }
         }
         blocks.push(KeyBlock { entries });
     }
@@ -372,8 +392,8 @@ fn read_record_blocks(reader: &mut Reader, header: &Header) -> Result<Vec<BlockE
     Ok(records)
 }
 
-pub(crate) fn load(mut reader: Reader, cwd: PathBuf) -> Result<Mdx> {
-    let header = read_header(&mut reader)?;
+pub(crate) fn load(mut reader: Reader, cwd: PathBuf, mode: Mode) -> Result<Mdx> {
+    let header = read_header(&mut reader, mode)?;
     let key_block_header = match &header.version {
         Version::V1 => read_key_block_header_v1(&mut reader)?,
         Version::V2 => read_key_block_header_v2(&mut reader)?,
@@ -381,12 +401,8 @@ pub(crate) fn load(mut reader: Reader, cwd: PathBuf) -> Result<Mdx> {
     let key_block_infos =
         read_key_block_infos(&mut reader, key_block_header.block_info_size, &header)?;
 
-    let key_blocks = read_key_blocks(
-        &mut reader,
-        key_block_header.key_block_size,
-        &header,
-        key_block_infos,
-    )?;
+    let key_block_compressed = read_buf(&mut reader, key_block_header.key_block_size)?;
+    let key_blocks = read_key_blocks(key_block_compressed, &header, key_block_infos)?;
 
     let records_info = read_record_blocks(&mut reader, &header)?;
 
@@ -478,17 +494,19 @@ fn record_offset(records_info: &Vec<BlockEntryInfo>, entry: &KeyEntry) -> Option
     None
 }
 
-fn find_definition(mdx: &mut Mdx, offset: RecordOffset) -> Result<String> {
-    fn find(sliec: &[u8], encoding: &'static Encoding) -> Result<String> {
-        let idx = sliec
-            .iter()
-            .position(|b| *b == 0)
-            .ok_or(Error::InvalidData)?;
-        let text = encoding.decode(&sliec[..idx - 1]).0.to_string();
-        Ok(text)
-    }
+pub fn slice_to_string(slice: &[u8], encoding: &'static Encoding) -> Result<String> {
+    let idx = slice
+        .iter()
+        .position(|b| *b == 0)
+        .ok_or(Error::InvalidData)?;
+    let text = encoding.decode(&slice[..idx - 1]).0.to_string();
+    Ok(text)
+}
+
+// TODO: search twice because of borrow checker limit
+fn find_definition<'b>(mdx: &'b mut Mdx, offset: RecordOffset) -> Result<&'b [u8]> {
     match mdx.record_cache.entry(offset.buf_offset) {
-        Entry::Occupied(o) => find(&o.get()[offset.block_offset..], mdx.encoding),
+        Entry::Occupied(_) => {}
         Entry::Vacant(v) => {
             let reader = &mut mdx.reader;
             reader.seek(SeekFrom::Start(
@@ -496,16 +514,16 @@ fn find_definition(mdx: &mut Mdx, offset: RecordOffset) -> Result<String> {
             ))?;
             let data = read_buf(reader, offset.record_size)?;
             let decompressed = decode_block(&data, offset.record_size, offset.decomp_size)?;
-            let decompressed = v.insert(decompressed);
-            find(&decompressed[offset.block_offset..], mdx.encoding)
+            v.insert(decompressed);
         }
     }
+    Ok(&mdx.record_cache[&offset.buf_offset][offset.block_offset..])
 }
 
-pub(crate) fn lookup_record<'a>(
-    mdx: &mut Mdx,
+pub(crate) fn lookup_record<'a, 'b>(
+    mdx: &'b mut Mdx,
     word: &'a str,
-) -> Result<Option<WordDefinition<'a>>> {
+) -> Result<Option<WordDefinition<'a, 'b>>> {
     if let Some(key_block) = bisect_search(&mdx.key_blocks, word) {
         if let Some(entry) = bisect_search(&key_block.entries, word) {
             if let Some(offset) = record_offset(&mdx.records_info, entry) {

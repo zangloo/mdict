@@ -2,6 +2,7 @@ use crate::parser::{load, lookup_record};
 use crate::Result;
 use encoding_rs::Encoding;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
@@ -9,6 +10,7 @@ use std::path::PathBuf;
 
 pub type Reader = BufReader<File>;
 
+#[derive(Debug)]
 pub struct Mdx {
     pub(crate) encoding: &'static Encoding,
     #[allow(unused)]
@@ -47,9 +49,27 @@ pub(crate) struct RecordOffset {
 }
 
 #[derive(Debug)]
-pub struct WordDefinition<'a> {
+pub struct WordDefinition<'a, 'b> {
     pub key: &'a str,
-    pub definition: String,
+    pub definition: &'b [u8],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Mode {
+    Mdd,
+    Mdx,
+}
+
+impl Mode {
+    fn from_str(extension: &OsStr) -> Self {
+        if extension == "mdd" {
+            return Self::Mdd;
+        }
+        if extension == "mdx" {
+            return Self::Mdx;
+        }
+        unreachable!("{:?}", extension)
+    }
 }
 
 impl Mdx {
@@ -58,11 +78,12 @@ impl Mdx {
         let f = File::open(&path)?;
         let reader = BufReader::new(f);
         let cwd = path.parent().unwrap().canonicalize()?;
-        let mdx = load(reader, cwd)?;
+        let mode = Mode::from_str(path.extension().unwrap());
+        let mdx = load(reader, cwd, mode)?;
         Ok(mdx)
     }
 
-    pub fn lookup<'a>(&mut self, word: &'a str) -> Result<Option<WordDefinition<'a>>> {
+    pub fn lookup<'a, 'b>(&'b mut self, word: &'a str) -> Result<Option<WordDefinition<'a, 'b>>> {
         lookup_record(self, word)
     }
 
