@@ -1,4 +1,4 @@
-use crate::parser::{load, lookup_record};
+use crate::parser::load;
 use crate::Result;
 use encoding_rs::Encoding;
 use std::collections::HashMap;
@@ -81,10 +81,6 @@ impl Mdx {
         let mode = Mode::from_str(path.extension().unwrap());
         let mdx = load(reader, cwd, mode)?;
         Ok(mdx)
-    }
-
-    pub fn lookup<'a, 'b>(&'b mut self, word: &'a str) -> Result<Option<WordDefinition<'a, 'b>>> {
-        lookup_record(self, word)
     }
 
     pub fn get_resource(&self, path: &str) -> Result<Vec<u8>> {

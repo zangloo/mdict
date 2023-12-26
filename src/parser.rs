@@ -520,20 +520,19 @@ fn find_definition<'b>(mdx: &'b mut Mdx, offset: RecordOffset) -> Result<&'b [u8
     Ok(&mdx.record_cache[&offset.buf_offset][offset.block_offset..])
 }
 
-pub(crate) fn lookup_record<'a, 'b>(
-    mdx: &'b mut Mdx,
-    word: &'a str,
-) -> Result<Option<WordDefinition<'a, 'b>>> {
-    if let Some(key_block) = bisect_search(&mdx.key_blocks, word) {
-        if let Some(entry) = bisect_search(&key_block.entries, word) {
-            if let Some(offset) = record_offset(&mdx.records_info, entry) {
-                let definition = find_definition(mdx, offset)?;
-                return Ok(Some(WordDefinition {
-                    key: word,
-                    definition,
-                }));
+impl Mdx {
+    pub fn lookup<'a, 'b>(&'b mut self, word: &'a str) -> Result<Option<WordDefinition<'a, 'b>>> {
+        if let Some(key_block) = bisect_search(&self.key_blocks, word) {
+            if let Some(entry) = bisect_search(&key_block.entries, word) {
+                if let Some(offset) = record_offset(&self.records_info, entry) {
+                    let definition = find_definition(self, offset)?;
+                    return Ok(Some(WordDefinition {
+                        key: word,
+                        definition,
+                    }));
+                }
             }
         }
+        Ok(None)
     }
-    Ok(None)
 }
