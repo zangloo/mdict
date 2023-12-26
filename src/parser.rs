@@ -229,7 +229,7 @@ fn decode_key_blocks(data: &[u8], header: &Header) -> Result<Vec<BlockEntryInfo>
         }
     }
     #[inline]
-    fn extract_text(data: &[u8], header: &Header, bytes: usize) -> (String, usize) {
+    fn extract_text(header: &Header, bytes: usize) -> usize {
         let text_size = match header.version {
             Version::V1 => bytes,
             Version::V2 => bytes + 1,
@@ -239,13 +239,7 @@ fn decode_key_blocks(data: &[u8], header: &Header) -> Result<Vec<BlockEntryInfo>
         } else {
             text_size * 2
         };
-        let text = header
-            .encoding
-            .decode(&data[..text_size])
-            .0
-            .trim_matches(char::from(0))
-            .to_string();
-        (text, bytes)
+        bytes
     }
 
     let mut key_block_info_list = vec![];
@@ -255,11 +249,11 @@ fn decode_key_blocks(data: &[u8], header: &Header) -> Result<Vec<BlockEntryInfo>
         slice = &slice[delta..];
         let (bytes, delta) = read_num_bytes(slice, header);
         slice = &slice[delta..];
-        let (_, delta) = extract_text(slice, header, bytes);
+        let delta = extract_text(header, bytes);
         slice = &slice[delta..];
         let (bytes, delta) = read_num_bytes(slice, header);
         slice = &slice[delta..];
-        let (_, delta) = extract_text(slice, header, bytes);
+        let delta = extract_text(header, bytes);
         slice = &slice[delta..];
         let (compressed_size, delta) = read_size(slice, header);
         slice = &slice[delta..];
