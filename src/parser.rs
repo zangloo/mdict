@@ -535,4 +535,15 @@ impl Mdx {
         }
         Ok(None)
     }
+
+    pub fn lookup_as_string<'a, 'b>(&'b mut self, word: &'a str) -> Result<Option<String>> {
+        let encoding = self.encoding;
+        let definition = self.lookup(word)?;
+        if let Some(definition) = definition {
+            let x = slice_to_string(definition.definition, encoding)?;
+            Ok(Some(x))
+        } else {
+            Ok(None)
+        }
+    }
 }
