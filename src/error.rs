@@ -12,11 +12,14 @@ pub enum Error {
 	#[error("Invalid mdx {0} checksum")]
 	InvalidCheckSum(&'static str),
 
-	#[error("No GeneratedByEngineVersion found in header")]
+	#[error("No Version found in header")]
 	NoVersion,
 
 	#[error("Invalid version({0})")]
 	InvalidVersion(String),
+
+	#[error("No Title found in header")]
+	NoTitle,
 
 	#[error("Unsupported version({0})")]
 	UnsupportedVersion(u8),

@@ -108,7 +108,7 @@ fn read_header(reader: &mut Reader, default_encoding: &'static Encoding) -> Resu
 
 	let title = attrs
 		.get("Title")
-		.ok_or(Error::NoVersion)?
+		.ok_or(Error::NoTitle)?
 		.trim()
 		.to_owned();
 
