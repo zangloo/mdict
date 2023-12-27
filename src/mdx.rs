@@ -15,6 +15,7 @@ pub struct MDict {
 
 pub struct Mdx {
 	pub(crate) encoding: &'static Encoding,
+	pub(crate) title: String,
 	#[allow(unused)]
 	pub(crate) encrypted: u8,
 	pub(crate) key_blocks: Vec<KeyBlock>,
@@ -95,6 +96,11 @@ impl MDict {
 			}
 		}
 		Ok(None)
+	}
+
+	pub fn dict_name(&self) -> &str
+	{
+		&self.mdx.title
 	}
 }
 

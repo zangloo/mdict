@@ -67,6 +67,7 @@ struct Header {
 	version: Version,
 	encrypted: u8,
 	encoding: &'static Encoding,
+	title: String,
 }
 
 #[inline]
@@ -104,6 +105,13 @@ fn read_header(reader: &mut Reader, default_encoding: &'static Encoding) -> Resu
 		.parse::<u8>()
 		.or(Err(Error::InvalidVersion(version_str.to_owned())))?;
 
+
+	let title = attrs
+		.get("Title")
+		.ok_or(Error::NoVersion)?
+		.trim()
+		.to_owned();
+
 	let version = match version {
 		1 => Version::V1,
 		2 => Version::V2,
@@ -133,6 +141,7 @@ fn read_header(reader: &mut Reader, default_encoding: &'static Encoding) -> Resu
 		version,
 		encrypted,
 		encoding,
+		title,
 	})
 }
 
@@ -422,6 +431,7 @@ pub(crate) fn load(mut reader: Reader, default_encoding: &'static Encoding) -> R
 
 	Ok(Mdx {
 		encoding: header.encoding,
+		title: header.title,
 		encrypted: header.encrypted,
 		key_blocks,
 		records_info,
