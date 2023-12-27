@@ -127,7 +127,7 @@ fn read_header(reader: &mut Reader, default_encoding: &'static Encoding) -> Resu
 				.ok_or(Error::InvalidEncoding(encoding.clone()))?
 		}
 	} else {
-		encoding_rs::UTF_8
+		default_encoding
 	};
 	Ok(Header {
 		version,
