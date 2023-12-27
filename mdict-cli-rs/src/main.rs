@@ -32,18 +32,34 @@ fn main() -> Result<()> {
         .collect();
 
     let items: Vec<_> = results.iter().map(|(p, _)| p.to_str().unwrap()).collect();
-    let selection = dialoguer::Select::new()
-        .with_prompt("What do you choose?")
-        .items(&items)
-        .interact()
-        .unwrap();
 
+    if items.is_empty() {
+        eprintln!("not found");
+        return Ok(());
+    }
+
+    if items.len() == 1 {
+        println!("only found in {:?}", results[0].0);
+        fun_name(&results[0])?;
+    } else {
+        let selection = dialoguer::Select::new()
+            .with_prompt("What do you choose?")
+            .items(&items)
+            .interact()
+            .unwrap();
+
+        fun_name(&results[selection])?;
+    }
+
+    Ok(())
+}
+
+fn fun_name(selected: &(PathBuf, String)) -> Result<()> {
     let temp_dir = tempdir()?;
     let index_html = temp_dir.path().join("index.html");
-    File::create(&index_html)?.write_all(results[selection].1.as_bytes())?;
-
+    File::create(&index_html)?.write_all(selected.1.as_bytes())?;
     let mut resources: HashSet<&str> = HashSet::new();
-    let dom = Dom::parse(&results[selection].1)?;
+    let dom = Dom::parse(&selected.1)?;
     for (k, v) in dom
         .children
         .iter()
@@ -55,12 +71,11 @@ fn main() -> Result<()> {
             resources.insert(v);
         }
     }
-
-    let mdd_path = results[selection].0.with_extension("mdd");
+    let mdd_path = selected.0.with_extension("mdd");
     if let Ok(mut mdd) = Mdx::from(&mdd_path) {
         for resource in resources {
             let p = {
-                let mut p = results[selection].0.clone();
+                let mut p = selected.0.clone();
                 p.pop();
                 p.push(resource);
                 p
@@ -90,9 +105,7 @@ fn main() -> Result<()> {
     } else {
         eprintln!("{:?} not exists", mdd_path);
     }
-
     Command::new("carbonyl").arg(index_html).status()?;
-
     Ok(())
 }
 
