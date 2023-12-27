@@ -1,7 +1,11 @@
+use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
+	#[error("Invalid Path: {0}")]
+	InvalidPath(PathBuf),
+
 	#[error("Failed to reading: {0}")]
 	FailedReading(std::io::Error),
 

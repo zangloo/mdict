@@ -5,7 +5,7 @@
 This is a library to use mdict dict.
 Some code come from https://github.com/eatgrass/mdict-parser
 
-Only Mdx and v1,v2 is supported now.
+Only v1,v2 is supported now.
 Tested for v2 only yet.
 
 ## License

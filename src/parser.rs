@@ -3,7 +3,6 @@ use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::io::{BufReader, Read, Seek, SeekFrom};
-use std::path::PathBuf;
 use adler32::RollingAdler32;
 use byteorder::{BE, ByteOrder, LE, ReadBytesExt};
 use compress::zlib;
@@ -15,7 +14,7 @@ use salsa20::cipher::{KeyIvInit, StreamCipher};
 use salsa20::cipher::crypto_common::Output;
 
 use crate::{Error, mdx::Mdx, Result};
-use crate::mdx::{BlockEntryInfo, KeyBlock, KeyEntry, Reader, RecordOffset, WordDefinition};
+use crate::mdx::{BlockEntryInfo, KeyBlock, KeyEntry, Reader, RecordOffset};
 
 #[derive(Debug)]
 struct KeyBlockHeader {
@@ -128,7 +127,7 @@ fn read_header(reader: &mut Reader, default_encoding: &'static Encoding) -> Resu
 				.ok_or(Error::InvalidEncoding(encoding.clone()))?
 		}
 	} else {
-		default_encoding
+		encoding_rs::UTF_8
 	};
 	Ok(Header {
 		version,
@@ -350,36 +349,6 @@ fn decode_block(slice: &[u8], compressed_size: usize, decompressed_size: usize) 
 fn read_key_blocks(reader: &mut Reader, size: usize, header: &Header,
 	entry_infos: Vec<BlockEntryInfo>, ) -> Result<Vec<KeyBlock>>
 {
-	#[inline]
-	fn decode_text<'a>(header: &Header, entries_slice: &'a [u8]) -> Result<(Cow<'a, str>, usize)>
-	{
-		let (idx, delta) = if header.encoding == UTF_16LE {
-			let mut found = None;
-			for i in (0..entries_slice.len()).step_by(2) {
-				if entries_slice[i] == 0 && entries_slice[i + 1] == 0 {
-					found = Some(i);
-					break;
-				}
-			}
-			if let Some(idx) = found {
-				(idx, 2)
-			} else {
-				return Err(Error::InvalidData);
-			}
-		} else if header.encoding == UTF_8 {
-			let idx = entries_slice
-				.iter()
-				.position(|b| *b == 0)
-				.ok_or(Error::InvalidData)?;
-			(idx, 1)
-		} else {
-			return Err(Error::InvalidEncoding(header.encoding.name().to_owned()));
-		};
-
-		let text = header.encoding.decode(&entries_slice[..idx]).0;
-		Ok((text, idx + delta))
-	}
-
 	let data = read_buf(reader, size)?;
 
 	let mut blocks = vec![];
@@ -397,9 +366,9 @@ fn read_key_blocks(reader: &mut Reader, size: usize, header: &Header,
 				Version::V2 => (BE::read_u64(entries_slice) as usize, 8),
 			};
 			entries_slice = &entries_slice[delta..];
-			let (text, idx) = decode_text(header, entries_slice)?;
+			let (text, idx) = decode_slice_string(entries_slice, header.encoding)?;
 
-			entries.push(KeyEntry { offset, text: text.to_string() });
+			entries.push(KeyEntry { offset, text: text.to_ascii_lowercase() });
 			entries_slice = &entries_slice[idx..];
 		}
 		blocks.push(KeyBlock {
@@ -427,9 +396,9 @@ fn read_record_blocks(reader: &mut Reader, header: &Header)
 	Ok(records)
 }
 
-pub(crate) fn load(mut reader: Reader, cwd: PathBuf) -> Result<Mdx>
+pub(crate) fn load(mut reader: Reader, default_encoding: &'static Encoding) -> Result<Mdx>
 {
-	let header = read_header(&mut reader, UTF_16LE)?;
+	let header = read_header(&mut reader, default_encoding)?;
 	let key_block_header = match &header.version {
 		Version::V1 => read_key_block_header_v1(&mut reader)?,
 		Version::V2 => read_key_block_header_v2(&mut reader)?,
@@ -459,7 +428,6 @@ pub(crate) fn load(mut reader: Reader, cwd: PathBuf) -> Result<Mdx>
 		reader,
 		record_block_offset,
 		record_cache: HashMap::new(),
-		cwd,
 	})
 }
 
@@ -471,10 +439,10 @@ impl PartialEq<str> for KeyBlock {
 }
 
 impl PartialOrd<str> for KeyBlock {
-	fn partial_cmp(&self, word: &str) -> Option<Ordering> {
-		if self.entries.first()?.text.as_str() > word {
+	fn partial_cmp(&self, word_lowercase: &str) -> Option<Ordering> {
+		if self.entries.first()?.text.as_str() > word_lowercase {
 			Some(Ordering::Greater)
-		} else if self.entries.last()?.text.as_str() < word {
+		} else if self.entries.last()?.text.as_str() < word_lowercase {
 			Some(Ordering::Less)
 		} else {
 			Some(Ordering::Equal)
@@ -483,9 +451,9 @@ impl PartialOrd<str> for KeyBlock {
 }
 
 impl PartialEq<str> for KeyEntry {
-	fn eq(&self, word: &str) -> bool
+	fn eq(&self, word_lowercase: &str) -> bool
 	{
-		self.partial_cmp(word)
+		self.partial_cmp(word_lowercase)
 			.map_or(false, |o| matches!(o, Ordering::Equal))
 	}
 }
@@ -540,37 +508,61 @@ fn record_offset(records_info: &Vec<BlockEntryInfo>, entry: &KeyEntry) -> Option
 	None
 }
 
-fn find_definition(mdx: &mut Mdx, offset: RecordOffset) -> Result<String>
+fn find_definition(mdx: &mut Mdx, offset: RecordOffset) -> Result<&[u8]>
 {
-	fn find(sliec: &[u8], encoding: &'static Encoding) -> Result<String>
-	{
-		let idx = sliec.iter().position(|b| *b == 0)
-			.ok_or(Error::InvalidData)?;
-		let text = encoding.decode(&sliec[..idx - 1]).0.to_string();
-		Ok(text)
-	}
-	match mdx.record_cache.entry(offset.buf_offset) {
-		Entry::Occupied(o) => find(&o.get()[offset.block_offset..], mdx.encoding),
+	let data = match mdx.record_cache.entry(offset.buf_offset) {
+		Entry::Occupied(o) => o.into_mut(),
 		Entry::Vacant(v) => {
 			let reader = &mut mdx.reader;
 			reader.seek(SeekFrom::Start(mdx.record_block_offset + offset.buf_offset as u64))?;
 			let data = read_buf(reader, offset.record_size)?;
 			let decompressed = decode_block(&data, offset.record_size, offset.decomp_size)?;
-			let decompressed = v.insert(decompressed);
-			find(&decompressed[offset.block_offset..], mdx.encoding)
+			v.insert(decompressed)
 		}
-	}
+	};
+	Ok(&data[offset.block_offset..])
 }
 
-pub(crate) fn lookup_record<'a>(mdx: &mut Mdx, word: &'a str) -> Result<Option<WordDefinition<'a>>>
+pub(crate) fn lookup_record<'a>(mdx: &'a mut Mdx, word: &str) -> Result<Option<&'a [u8]>>
 {
-	if let Some(key_block) = bisect_search(&mdx.key_blocks, word) {
-		if let Some(entry) = bisect_search(&key_block.entries, word) {
+	let word_lowercase = word.to_ascii_lowercase();
+	if let Some(key_block) = bisect_search(&mdx.key_blocks, &word_lowercase) {
+		if let Some(entry) = bisect_search(&key_block.entries, &word_lowercase) {
 			if let Some(offset) = record_offset(&mdx.records_info, entry) {
-				let definition = find_definition(mdx, offset)?;
-				return Ok(Some(WordDefinition { key: word, definition }));
+				let slice = find_definition(mdx, offset)?;
+				return Ok(Some(slice));
 			}
 		}
 	}
 	Ok(None)
+}
+
+pub(crate) fn decode_slice_string<'a>(slice: &'a [u8],
+	encoding: &'static Encoding) -> Result<(Cow<'a, str>, usize)>
+{
+	let (idx, delta) = if encoding == UTF_16LE {
+		let mut found = None;
+		for i in (0..slice.len()).step_by(2) {
+			if slice[i] == 0 && slice[i + 1] == 0 {
+				found = Some(i);
+				break;
+			}
+		}
+		if let Some(idx) = found {
+			(idx, 2)
+		} else {
+			return Err(Error::InvalidData);
+		}
+	} else if encoding == UTF_8 {
+		let idx = slice
+			.iter()
+			.position(|b| *b == 0)
+			.ok_or(Error::InvalidData)?;
+		(idx, 1)
+	} else {
+		return Err(Error::InvalidEncoding(encoding.name().to_owned()));
+	};
+
+	let text = encoding.decode(&slice[..idx]).0;
+	Ok((text, idx + delta))
 }
