@@ -3,6 +3,7 @@ mod error;
 mod parser;
 
 pub use crate::mdx::MDict;
+pub use crate::mdx::WordDefinition;
 pub use crate::error::Error;
 pub use crate::error::Result;
 
