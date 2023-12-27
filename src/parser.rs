@@ -237,6 +237,20 @@ fn decode_key_blocks(data: &[u8], header: &Header)
 		}
 	}
 	#[inline]
+	fn text_bytes(header: &Header, bytes: usize) -> usize
+	{
+		let text_size = match header.version {
+			Version::V1 => bytes,
+			Version::V2 => bytes + 1,
+		};
+		if header.encoding == encoding_rs::UTF_8 {
+			text_size
+		} else {
+			text_size * 2
+		}
+	}
+	#[inline]
+	#[allow(unused)]
 	fn extract_text(data: &[u8], header: &Header, bytes: usize) -> (String, usize)
 	{
 		let text_size = match header.version {
@@ -263,11 +277,11 @@ fn decode_key_blocks(data: &[u8], header: &Header)
 		slice = &slice[delta..];
 		let (bytes, delta) = read_num_bytes(slice, header);
 		slice = &slice[delta..];
-		let (_, delta) = extract_text(slice, header, bytes);
+		let delta = text_bytes(header, bytes);
 		slice = &slice[delta..];
 		let (bytes, delta) = read_num_bytes(slice, header);
 		slice = &slice[delta..];
-		let (_, delta) = extract_text(slice, header, bytes);
+		let delta = text_bytes(header, bytes);
 		slice = &slice[delta..];
 		let (compressed_size, delta) = read_size(slice, header);
 		slice = &slice[delta..];
