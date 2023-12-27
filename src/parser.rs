@@ -483,8 +483,7 @@ fn record_offset(records_info: &Vec<BlockEntryInfo>, entry: &KeyEntry) -> Option
 	let mut block_offset = 0;
 	let mut buf_offset = 0;
 	for info in records_info {
-		if entry.offset <= block_offset + info.decompressed_size {
-			// return Some((item_offset, block_offset, i));
+		if entry.offset < block_offset + info.decompressed_size {
 			return Some(RecordOffset {
 				buf_offset,
 				block_offset: entry.offset - block_offset,
