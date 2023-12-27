@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -6,14 +7,14 @@ use std::path::PathBuf;
 use adler32::RollingAdler32;
 use byteorder::{BE, ByteOrder, LE, ReadBytesExt};
 use compress::zlib;
-use encoding_rs::{Encoding, UTF_16LE};
+use encoding_rs::{Encoding, UTF_16LE, UTF_8};
 use regex::Regex;
 use ripemd::{Digest, Ripemd128, Ripemd128Core};
 use salsa20::Salsa20;
 use salsa20::cipher::{KeyIvInit, StreamCipher};
 use salsa20::cipher::crypto_common::Output;
 
-use crate::{Error, Mdx, Result};
+use crate::{Error, mdx::Mdx, Result};
 use crate::mdx::{BlockEntryInfo, KeyBlock, KeyEntry, Reader, RecordOffset, WordDefinition};
 
 #[derive(Debug)]
@@ -86,7 +87,7 @@ fn check_adler32(data: &[u8], checksum: u32) -> Result<()>
 	Ok(())
 }
 
-fn read_header(reader: &mut Reader) -> Result<Header>
+fn read_header(reader: &mut Reader, default_encoding: &'static Encoding) -> Result<Header>
 {
 	let bytes = reader.read_u32::<BE>()?;
 	let info_buf = read_buf(reader, bytes as usize)?;
@@ -120,10 +121,14 @@ fn read_header(reader: &mut Reader) -> Result<Header>
 		.unwrap_or(0);
 
 	let encoding = if let Some(encoding) = attrs.get("Encoding") {
-		Encoding::for_label(encoding.as_bytes())
-			.ok_or(Error::InvalidEncoding(encoding.clone()))?
+		if encoding.is_empty() {
+			default_encoding
+		} else {
+			Encoding::for_label(encoding.as_bytes())
+				.ok_or(Error::InvalidEncoding(encoding.clone()))?
+		}
 	} else {
-		encoding_rs::UTF_8
+		default_encoding
 	};
 	Ok(Header {
 		version,
@@ -345,6 +350,36 @@ fn decode_block(slice: &[u8], compressed_size: usize, decompressed_size: usize) 
 fn read_key_blocks(reader: &mut Reader, size: usize, header: &Header,
 	entry_infos: Vec<BlockEntryInfo>, ) -> Result<Vec<KeyBlock>>
 {
+	#[inline]
+	fn decode_text<'a>(header: &Header, entries_slice: &'a [u8]) -> Result<(Cow<'a, str>, usize)>
+	{
+		let (idx, delta) = if header.encoding == UTF_16LE {
+			let mut found = None;
+			for i in (0..entries_slice.len()).step_by(2) {
+				if entries_slice[i] == 0 && entries_slice[i + 1] == 0 {
+					found = Some(i);
+					break;
+				}
+			}
+			if let Some(idx) = found {
+				(idx, 2)
+			} else {
+				return Err(Error::InvalidData);
+			}
+		} else if header.encoding == UTF_8 {
+			let idx = entries_slice
+				.iter()
+				.position(|b| *b == 0)
+				.ok_or(Error::InvalidData)?;
+			(idx, 1)
+		} else {
+			return Err(Error::InvalidEncoding(header.encoding.name().to_owned()));
+		};
+
+		let text = header.encoding.decode(&entries_slice[..idx]).0;
+		Ok((text, idx + delta))
+	}
+
 	let data = read_buf(reader, size)?;
 
 	let mut blocks = vec![];
@@ -362,10 +397,7 @@ fn read_key_blocks(reader: &mut Reader, size: usize, header: &Header,
 				Version::V2 => (BE::read_u64(entries_slice) as usize, 8),
 			};
 			entries_slice = &entries_slice[delta..];
-			let idx = entries_slice.iter().position(|b| *b == 0)
-				.ok_or(Error::InvalidData)?;
-			let text = header.encoding.decode(&entries_slice[..idx]).0;
-			let idx = idx + 1;
+			let (text, idx) = decode_text(header, entries_slice)?;
 
 			entries.push(KeyEntry { offset, text: text.to_string() });
 			entries_slice = &entries_slice[idx..];
@@ -397,14 +429,10 @@ fn read_record_blocks(reader: &mut Reader, header: &Header)
 
 pub(crate) fn load(mut reader: Reader, cwd: PathBuf) -> Result<Mdx>
 {
-	let header = read_header(&mut reader)?;
+	let header = read_header(&mut reader, UTF_16LE)?;
 	let key_block_header = match &header.version {
-		Version::V1 => {
-			read_key_block_header_v1(&mut reader)?
-		}
-		Version::V2 => {
-			read_key_block_header_v2(&mut reader)?
-		}
+		Version::V1 => read_key_block_header_v1(&mut reader)?,
+		Version::V2 => read_key_block_header_v2(&mut reader)?,
 	};
 	let key_block_infos = read_key_block_infos(
 		&mut reader,
