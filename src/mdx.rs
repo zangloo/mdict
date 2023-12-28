@@ -57,24 +57,18 @@ pub struct WordDefinition<'a> {
 }
 
 impl MDict {
+	pub fn builder(path: impl Into<PathBuf>) -> MDictBuilder
+	{
+		MDictBuilder {
+			path: path.into(),
+			cache_definition: false,
+			cache_resource: false,
+		}
+	}
+
 	pub fn from(path: impl Into<PathBuf>) -> Result<Self>
 	{
-		let path = path.into();
-		let f = File::open(&path)?;
-		let reader = BufReader::new(f);
-		let cwd = path.parent()
-			.ok_or_else(|| Error::InvalidPath(path.clone()))?
-			.canonicalize()?;
-		let mdx = load(reader, UTF_16LE)?;
-		let filename = path.file_stem()
-			.ok_or_else(|| Error::InvalidPath(path.clone()))?
-			.to_str()
-			.ok_or_else(|| Error::InvalidPath(path.clone()))?;
-		let resources = load_resources(&cwd, filename)?;
-		Ok(MDict {
-			mdx,
-			resources,
-		})
+		MDict::builder(path).build()
 	}
 
 	pub fn lookup<'a>(&mut self, word: &'a str) -> Result<Option<WordDefinition<'a>>>
@@ -104,7 +98,45 @@ impl MDict {
 	}
 }
 
-pub(crate) fn load_resources(cwd: &PathBuf, name: &str) -> Result<Vec<Mdx>>
+pub struct MDictBuilder {
+	path: PathBuf,
+	cache_definition: bool,
+	cache_resource: bool,
+}
+
+impl MDictBuilder {
+	pub fn cache_definition(mut self, cache: bool) -> Self
+	{
+		self.cache_definition = cache;
+		self
+	}
+	pub fn cache_resource(mut self, cache: bool) -> Self
+	{
+		self.cache_resource = cache;
+		self
+	}
+	pub fn build(self) -> Result<MDict>
+	{
+		let path = self.path;
+		let f = File::open(&path)?;
+		let reader = BufReader::new(f);
+		let cwd = path.parent()
+			.ok_or_else(|| Error::InvalidPath(path.clone()))?
+			.canonicalize()?;
+		let mdx = load(reader, UTF_16LE)?;
+		let filename = path.file_stem()
+			.ok_or_else(|| Error::InvalidPath(path.clone()))?
+			.to_str()
+			.ok_or_else(|| Error::InvalidPath(path.clone()))?;
+		let resources = load_resources(&cwd, filename)?;
+		Ok(MDict {
+			mdx,
+			resources,
+		})
+	}
+}
+
+fn load_resources(cwd: &PathBuf, name: &str) -> Result<Vec<Mdx>>
 {
 	let mut resources = vec![];
 	// <filename>.mdd first
