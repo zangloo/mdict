@@ -10,7 +10,7 @@ pub type Reader = BufReader<File>;
 
 pub struct MDict {
 	pub(crate) mdx: Mdx,
-	pub(crate) dataset: Vec<Mdx>,
+	pub(crate) resources: Vec<Mdx>,
 }
 
 pub struct Mdx {
@@ -70,10 +70,10 @@ impl MDict {
 			.ok_or_else(|| Error::InvalidPath(path.clone()))?
 			.to_str()
 			.ok_or_else(|| Error::InvalidPath(path.clone()))?;
-		let dataset = load_dataset(&cwd, filename)?;
+		let resources = load_resources(&cwd, filename)?;
 		Ok(MDict {
 			mdx,
-			dataset,
+			resources,
 		})
 	}
 
@@ -90,7 +90,7 @@ impl MDict {
 
 	pub fn get_resource(&mut self, path: &str) -> Result<Option<&[u8]>>
 	{
-		for mdx in &mut self.dataset {
+		for mdx in &mut self.resources {
 			if let Some(slice) = lookup_record(mdx, path)? {
 				return Ok(Some(slice));
 			}
@@ -98,23 +98,23 @@ impl MDict {
 		Ok(None)
 	}
 
-	pub fn dict_name(&self) -> &str
+	pub fn title(&self) -> &str
 	{
 		&self.mdx.title
 	}
 }
 
-pub(crate) fn load_dataset(cwd: &PathBuf, name: &str) -> Result<Vec<Mdx>>
+pub(crate) fn load_resources(cwd: &PathBuf, name: &str) -> Result<Vec<Mdx>>
 {
-	let mut dataset = vec![];
+	let mut resources = vec![];
 	// <filename>.mdd first
 	let path = cwd.join(format!("{}.mdd", name));
 	if !path.exists() {
-		return Ok(dataset);
+		return Ok(resources);
 	}
 	let f = File::open(&path)?;
 	let reader = BufReader::new(f);
-	dataset.push(load(reader, UTF_16LE)?);
+	resources.push(load(reader, UTF_16LE)?);
 
 	// filename.n.mdd then
 	let mut i = 1;
@@ -125,8 +125,8 @@ pub(crate) fn load_dataset(cwd: &PathBuf, name: &str) -> Result<Vec<Mdx>>
 		}
 		let f = File::open(&path)?;
 		let reader = BufReader::new(f);
-		dataset.push(load(reader, UTF_16LE)?);
+		resources.push(load(reader, UTF_16LE)?);
 		i += 1;
 	}
-	Ok(dataset)
+	Ok(resources)
 }
