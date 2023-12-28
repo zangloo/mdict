@@ -25,4 +25,20 @@ mod tests {
 		let definition = mdx.get_resource("\\ZhongHuaSongPlane02b-HZ.woff").unwrap();
 		assert!(definition.is_some());
 	}
+
+	#[test]
+	fn cache_lookup()
+	{
+		let mut mdx = MDict::builder(MDX_V2)
+			.cache_definition(true)
+			.cache_resource(true)
+			.build()
+			.unwrap();
+		let definition = mdx.lookup("无").unwrap();
+		assert!(definition.is_some());
+		let definition = mdx.lookup("無").unwrap();
+		assert!(definition.is_some());
+		let definition = mdx.get_resource("\\ZhongHuaSongPlane02b-HZ.woff").unwrap();
+		assert!(definition.is_some());
+	}
 }

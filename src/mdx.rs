@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -22,7 +23,7 @@ pub struct Mdx {
 	pub(crate) records_info: Vec<BlockEntryInfo>,
 	pub(crate) reader: Reader,
 	pub(crate) record_block_offset: u64,
-	pub(crate) record_cache: HashMap<usize, Vec<u8>>,
+	pub(crate) record_cache: Option<HashMap<usize, Vec<u8>>>,
 }
 
 #[derive(Debug)]
@@ -75,14 +76,14 @@ impl MDict {
 	{
 		let encoding = self.mdx.encoding;
 		if let Some(slice) = lookup_record(&mut self.mdx, word)? {
-			let definition = decode_slice_string(slice, encoding)?.0.to_string();
+			let definition = decode_slice_string(&slice, encoding)?.0.to_string();
 			Ok(Some(WordDefinition { key: word, definition }))
 		} else {
 			Ok(None)
 		}
 	}
 
-	pub fn get_resource(&mut self, path: &str) -> Result<Option<&[u8]>>
+	pub fn get_resource(&mut self, path: &str) -> Result<Option<Cow<[u8]>>>
 	{
 		for mdx in &mut self.resources {
 			if let Some(slice) = lookup_record(mdx, path)? {
@@ -123,12 +124,12 @@ impl MDictBuilder {
 		let cwd = path.parent()
 			.ok_or_else(|| Error::InvalidPath(path.clone()))?
 			.canonicalize()?;
-		let mdx = load(reader, UTF_16LE)?;
+		let mdx = load(reader, UTF_16LE, self.cache_definition)?;
 		let filename = path.file_stem()
 			.ok_or_else(|| Error::InvalidPath(path.clone()))?
 			.to_str()
 			.ok_or_else(|| Error::InvalidPath(path.clone()))?;
-		let resources = load_resources(&cwd, filename)?;
+		let resources = load_resources(&cwd, filename, self.cache_resource)?;
 		Ok(MDict {
 			mdx,
 			resources,
@@ -136,7 +137,7 @@ impl MDictBuilder {
 	}
 }
 
-fn load_resources(cwd: &PathBuf, name: &str) -> Result<Vec<Mdx>>
+fn load_resources(cwd: &PathBuf, name: &str, cache_resources: bool) -> Result<Vec<Mdx>>
 {
 	let mut resources = vec![];
 	// <filename>.mdd first
@@ -146,7 +147,7 @@ fn load_resources(cwd: &PathBuf, name: &str) -> Result<Vec<Mdx>>
 	}
 	let f = File::open(&path)?;
 	let reader = BufReader::new(f);
-	resources.push(load(reader, UTF_16LE)?);
+	resources.push(load(reader, UTF_16LE, cache_resources)?);
 
 	// filename.n.mdd then
 	let mut i = 1;
@@ -157,7 +158,7 @@ fn load_resources(cwd: &PathBuf, name: &str) -> Result<Vec<Mdx>>
 		}
 		let f = File::open(&path)?;
 		let reader = BufReader::new(f);
-		resources.push(load(reader, UTF_16LE)?);
+		resources.push(load(reader, UTF_16LE, cache_resources)?);
 		i += 1;
 	}
 	Ok(resources)

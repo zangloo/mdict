@@ -405,7 +405,8 @@ fn read_record_blocks(reader: &mut Reader, header: &Header)
 	Ok(records)
 }
 
-pub(crate) fn load(mut reader: Reader, default_encoding: &'static Encoding) -> Result<Mdx>
+pub(crate) fn load(mut reader: Reader, default_encoding: &'static Encoding,
+	cache: bool) -> Result<Mdx>
 {
 	let header = read_header(&mut reader, default_encoding)?;
 	let key_block_header = match &header.version {
@@ -437,7 +438,7 @@ pub(crate) fn load(mut reader: Reader, default_encoding: &'static Encoding) -> R
 		records_info,
 		reader,
 		record_block_offset,
-		record_cache: HashMap::new(),
+		record_cache: if cache { Some(HashMap::new()) } else { None },
 	})
 }
 
@@ -518,22 +519,38 @@ fn record_offset(records_info: &Vec<BlockEntryInfo>, entry: &KeyEntry) -> Option
 	None
 }
 
-fn find_definition(mdx: &mut Mdx, offset: RecordOffset) -> Result<&[u8]>
+fn find_definition(mdx: &mut Mdx, offset: RecordOffset) -> Result<Cow<[u8]>>
 {
-	let data = match mdx.record_cache.entry(offset.buf_offset) {
-		Entry::Occupied(o) => o.into_mut(),
-		Entry::Vacant(v) => {
-			let reader = &mut mdx.reader;
-			reader.seek(SeekFrom::Start(mdx.record_block_offset + offset.buf_offset as u64))?;
-			let data = read_buf(reader, offset.record_size)?;
-			let decompressed = decode_block(&data, offset.record_size, offset.decomp_size)?;
-			v.insert(decompressed)
+	#[inline]
+	fn read_record(reader: &mut Reader, record_block_offset: u64,
+		offset: RecordOffset) -> Result<Vec<u8>>
+	{
+		reader.seek(SeekFrom::Start(record_block_offset + offset.buf_offset as u64))?;
+		let data = read_buf(reader, offset.record_size)?;
+		decode_block(&data, offset.record_size, offset.decomp_size)
+	}
+	let block_offset = offset.block_offset;
+	if let Some(cache) = &mut mdx.record_cache {
+		let data = match cache.entry(offset.buf_offset) {
+			Entry::Occupied(o) => o.into_mut(),
+			Entry::Vacant(v) => {
+				let reader = &mut mdx.reader;
+				let decompressed = read_record(reader, mdx.record_block_offset, offset)?;
+				v.insert(decompressed)
+			}
+		};
+		Ok(Cow::Borrowed(&data[block_offset..]))
+	} else {
+		let reader = &mut mdx.reader;
+		let mut data = read_record(reader, mdx.record_block_offset, offset)?;
+		if block_offset != 0 {
+			data = Vec::from(&data[block_offset..]);
 		}
-	};
-	Ok(&data[offset.block_offset..])
+		Ok(Cow::Owned(data))
+	}
 }
 
-pub(crate) fn lookup_record<'a>(mdx: &'a mut Mdx, word: &str) -> Result<Option<&'a [u8]>>
+pub(crate) fn lookup_record<'a>(mdx: &'a mut Mdx, word: &str) -> Result<Option<Cow<'a, [u8]>>>
 {
 	let word_lowercase = word.to_ascii_lowercase();
 	if let Some(key_block) = bisect_search(&mdx.key_blocks, &word_lowercase) {
