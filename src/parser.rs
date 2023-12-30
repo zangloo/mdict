@@ -256,10 +256,10 @@ fn decode_key_blocks(data: &[u8], header: &Header)
 			Version::V1 => bytes,
 			Version::V2 => bytes + 1,
 		};
-		if header.encoding == encoding_rs::UTF_8 {
-			text_size
-		} else {
+		if header.encoding == encoding_rs::UTF_16LE {
 			text_size * 2
+		} else {
+			text_size
 		}
 	}
 	#[inline]
@@ -270,10 +270,10 @@ fn decode_key_blocks(data: &[u8], header: &Header)
 			Version::V1 => bytes,
 			Version::V2 => bytes + 1,
 		};
-		let bytes = if header.encoding == encoding_rs::UTF_8 {
-			text_size
-		} else {
+		let bytes = if header.encoding == encoding_rs::UTF_16LE {
 			text_size * 2
+		} else {
+			text_size
 		};
 		let text = header.encoding
 			.decode(&data[..text_size])
