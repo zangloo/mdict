@@ -472,7 +472,14 @@ impl PartialEq<str> for KeyEntry {
 impl PartialOrd<str> for KeyEntry {
 	fn partial_cmp(&self, word: &str) -> Option<Ordering>
 	{
-		self.text.as_str().partial_cmp(word)
+        fn strip_punctuation(w: &str) -> String {
+            w.to_lowercase()
+                .chars()
+                .filter(|c| !c.is_ascii_punctuation() && !c.is_whitespace())
+                .collect()
+        }
+
+        strip_punctuation(self.text.as_str()).partial_cmp(&strip_punctuation(word))
 	}
 }
 
