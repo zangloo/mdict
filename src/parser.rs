@@ -446,17 +446,17 @@ pub(crate) fn load(mut reader: Reader, default_encoding: &'static Encoding,
 }
 
 impl PartialEq<str> for KeyBlock {
-	fn eq(&self, word: &str) -> bool {
-		self.partial_cmp(word)
+	fn eq(&self, key: &str) -> bool {
+		self.partial_cmp(key)
 			.map_or(false, |o| matches!(o, Ordering::Equal))
 	}
 }
 
 impl PartialOrd<str> for KeyBlock {
-	fn partial_cmp(&self, word_lowercase: &str) -> Option<Ordering> {
-		if self.entries.first()?.text.as_str() > word_lowercase {
+	fn partial_cmp(&self, key: &str) -> Option<Ordering> {
+		if self.entries.first()?.text.as_str() > key {
 			Some(Ordering::Greater)
-		} else if self.entries.last()?.text.as_str() < word_lowercase {
+		} else if self.entries.last()?.text.as_str() < key {
 			Some(Ordering::Less)
 		} else {
 			Some(Ordering::Equal)
@@ -465,28 +465,28 @@ impl PartialOrd<str> for KeyBlock {
 }
 
 impl PartialEq<str> for KeyEntry {
-	fn eq(&self, word_lowercase: &str) -> bool
+	fn eq(&self, key: &str) -> bool
 	{
-		self.partial_cmp(word_lowercase)
+		self.partial_cmp(key)
 			.map_or(false, |o| matches!(o, Ordering::Equal))
 	}
 }
 
 impl PartialOrd<str> for KeyEntry {
-	fn partial_cmp(&self, word: &str) -> Option<Ordering>
+	fn partial_cmp(&self, key: &str) -> Option<Ordering>
 	{
-		self.text.as_str().partial_cmp(word)
+		self.text.as_str().partial_cmp(key)
 	}
 }
 
-fn bisect_search<'a, C: ?Sized, T: PartialOrd<C>>(mut slice: &'a [T], word: &C)
+fn bisect_search<'a, C: ?Sized, T: PartialOrd<C>>(mut slice: &'a [T], key: &C)
 	-> Option<&'a T>
 {
 	while !slice.is_empty() {
 		let len = slice.len();
 		let idx = len >> 1;
 		let current = &slice[idx];
-		match current.partial_cmp(word) {
+		match current.partial_cmp(key) {
 			None => break,
 			Some(Ordering::Greater) => slice = &slice[..idx],
 			Some(Ordering::Equal) => return Some(current),
