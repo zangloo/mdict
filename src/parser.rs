@@ -14,7 +14,7 @@ use salsa20::cipher::{KeyIvInit, StreamCipher};
 use salsa20::cipher::crypto_common::Output;
 
 use crate::{Error, mdx::Mdx, Result};
-use crate::mdx::{BlockEntryInfo, KeyBlock, KeyEntry, Reader, RecordOffset};
+use crate::mdx::{BlockEntryInfo, KeyBlock, KeyEntry, KeyMaker, Reader, RecordOffset};
 
 #[derive(Debug)]
 struct KeyBlockHeader {
@@ -356,7 +356,8 @@ fn decode_block(slice: &[u8], compressed_size: usize, decompressed_size: usize) 
 }
 
 fn read_key_blocks(reader: &mut Reader, size: usize, header: &Header,
-	entry_infos: Vec<BlockEntryInfo>, ) -> Result<Vec<KeyBlock>>
+	entry_infos: Vec<BlockEntryInfo>, key_maker: &dyn KeyMaker, resource: bool)
+	-> Result<Vec<KeyBlock>>
 {
 	let data = read_buf(reader, size)?;
 
@@ -376,8 +377,8 @@ fn read_key_blocks(reader: &mut Reader, size: usize, header: &Header,
 			};
 			entries_slice = &entries_slice[delta..];
 			let (text, idx) = decode_slice_string(entries_slice, header.encoding)?;
-
-			entries.push(KeyEntry { offset, text: text.to_ascii_lowercase() });
+			let text = key_maker.make(&text, resource);
+			entries.push(KeyEntry { offset, text });
 			entries_slice = &entries_slice[idx..];
 		}
 		blocks.push(KeyBlock {
@@ -406,7 +407,7 @@ fn read_record_blocks(reader: &mut Reader, header: &Header)
 }
 
 pub(crate) fn load(mut reader: Reader, default_encoding: &'static Encoding,
-	cache: bool) -> Result<Mdx>
+	cache: bool, key_maker: &dyn KeyMaker, resource: bool) -> Result<Mdx>
 {
 	let header = read_header(&mut reader, default_encoding)?;
 	let key_block_header = match &header.version {
@@ -422,7 +423,9 @@ pub(crate) fn load(mut reader: Reader, default_encoding: &'static Encoding,
 		&mut reader,
 		key_block_header.key_block_size,
 		&header,
-		key_block_infos)?;
+		key_block_infos,
+		key_maker,
+		resource)?;
 
 	let records_info = read_record_blocks(
 		&mut reader,
@@ -550,11 +553,10 @@ fn find_definition(mdx: &mut Mdx, offset: RecordOffset) -> Result<Cow<[u8]>>
 	}
 }
 
-pub(crate) fn lookup_record<'a>(mdx: &'a mut Mdx, word: &str) -> Result<Option<Cow<'a, [u8]>>>
+pub(crate) fn lookup_record<'a>(mdx: &'a mut Mdx, key: &str) -> Result<Option<Cow<'a, [u8]>>>
 {
-	let word_lowercase = word.to_ascii_lowercase();
-	if let Some(key_block) = bisect_search(&mdx.key_blocks, &word_lowercase) {
-		if let Some(entry) = bisect_search(&key_block.entries, &word_lowercase) {
+	if let Some(key_block) = bisect_search(&mdx.key_blocks, key) {
+		if let Some(entry) = bisect_search(&key_block.entries, key) {
 			if let Some(offset) = record_offset(&mdx.records_info, entry) {
 				let slice = find_definition(mdx, offset)?;
 				return Ok(Some(slice));

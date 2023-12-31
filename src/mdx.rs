@@ -9,9 +9,22 @@ use crate::{Error, Result};
 
 pub type Reader = BufReader<File>;
 
-pub struct MDict {
+pub trait KeyMaker {
+	fn make(&self, key: &Cow<str>, resource: bool) -> String;
+}
+
+impl<F> KeyMaker for F where F: Fn(&Cow<str>, bool) -> String {
+	#[inline]
+	fn make(&self, key: &Cow<str>, resource: bool) -> String
+	{
+		self(key, resource)
+	}
+}
+
+pub struct MDict<M: KeyMaker> {
 	pub(crate) mdx: Mdx,
 	pub(crate) resources: Vec<Mdx>,
+	pub(crate) key_maker: M,
 }
 
 pub struct Mdx {
@@ -57,25 +70,12 @@ pub struct WordDefinition<'a> {
 	pub definition: String,
 }
 
-impl MDict {
-	pub fn builder(path: impl Into<PathBuf>) -> MDictBuilder
-	{
-		MDictBuilder {
-			path: path.into(),
-			cache_definition: false,
-			cache_resource: false,
-		}
-	}
-
-	pub fn from(path: impl Into<PathBuf>) -> Result<Self>
-	{
-		MDict::builder(path).build()
-	}
-
+impl<M: KeyMaker> MDict<M> {
 	pub fn lookup<'a>(&mut self, word: &'a str) -> Result<Option<WordDefinition<'a>>>
 	{
 		let encoding = self.mdx.encoding;
-		if let Some(slice) = lookup_record(&mut self.mdx, word)? {
+		let key = self.key_maker.make(&Cow::Borrowed(word), false);
+		if let Some(slice) = lookup_record(&mut self.mdx, &key)? {
 			let definition = decode_slice_string(&slice, encoding)?.0.to_string();
 			Ok(Some(WordDefinition { key: word, definition }))
 		} else {
@@ -85,8 +85,9 @@ impl MDict {
 
 	pub fn get_resource(&mut self, path: &str) -> Result<Option<Cow<[u8]>>>
 	{
+		let key = self.key_maker.make(&Cow::Borrowed(path), true);
 		for mdx in &mut self.resources {
-			if let Some(slice) = lookup_record(mdx, path)? {
+			if let Some(slice) = lookup_record(mdx, &key)? {
 				return Ok(Some(slice));
 			}
 		}
@@ -106,17 +107,34 @@ pub struct MDictBuilder {
 }
 
 impl MDictBuilder {
+	pub fn new(path: impl Into<PathBuf>) -> Self
+	{
+		MDictBuilder {
+			path: path.into(),
+			cache_definition: false,
+			cache_resource: false,
+		}
+	}
+
+	#[inline]
 	pub fn cache_definition(mut self, cache: bool) -> Self
 	{
 		self.cache_definition = cache;
 		self
 	}
+	#[inline]
 	pub fn cache_resource(mut self, cache: bool) -> Self
 	{
 		self.cache_resource = cache;
 		self
 	}
-	pub fn build(self) -> Result<MDict>
+	#[inline]
+	pub fn build(self) -> Result<MDict<impl KeyMaker>>
+	{
+		self.build_with_key_maker(|key: &Cow<str>, _resource: bool| key.to_ascii_lowercase())
+	}
+	pub fn build_with_key_maker<M: KeyMaker>(self, key_maker: M)
+		-> Result<MDict<M>>
 	{
 		let path = self.path;
 		let f = File::open(&path)?;
@@ -124,20 +142,31 @@ impl MDictBuilder {
 		let cwd = path.parent()
 			.ok_or_else(|| Error::InvalidPath(path.clone()))?
 			.canonicalize()?;
-		let mdx = load(reader, UTF_16LE, self.cache_definition)?;
+		let mdx = load(
+			reader,
+			UTF_16LE,
+			self.cache_definition,
+			&key_maker,
+			false)?;
 		let filename = path.file_stem()
 			.ok_or_else(|| Error::InvalidPath(path.clone()))?
 			.to_str()
 			.ok_or_else(|| Error::InvalidPath(path.clone()))?;
-		let resources = load_resources(&cwd, filename, self.cache_resource)?;
+		let resources = load_resources(
+			&cwd,
+			filename,
+			self.cache_resource,
+			&key_maker)?;
 		Ok(MDict {
 			mdx,
 			resources,
+			key_maker,
 		})
 	}
 }
 
-fn load_resources(cwd: &PathBuf, name: &str, cache_resources: bool) -> Result<Vec<Mdx>>
+fn load_resources(cwd: &PathBuf, name: &str, cache_resources: bool,
+	key_maker: &dyn KeyMaker) -> Result<Vec<Mdx>>
 {
 	let mut resources = vec![];
 	// <filename>.mdd first
@@ -147,7 +176,12 @@ fn load_resources(cwd: &PathBuf, name: &str, cache_resources: bool) -> Result<Ve
 	}
 	let f = File::open(&path)?;
 	let reader = BufReader::new(f);
-	resources.push(load(reader, UTF_16LE, cache_resources)?);
+	resources.push(load(
+		reader,
+		UTF_16LE,
+		cache_resources,
+		key_maker,
+		true)?);
 
 	// filename.n.mdd then
 	let mut i = 1;
@@ -158,7 +192,12 @@ fn load_resources(cwd: &PathBuf, name: &str, cache_resources: bool) -> Result<Ve
 		}
 		let f = File::open(&path)?;
 		let reader = BufReader::new(f);
-		resources.push(load(reader, UTF_16LE, cache_resources)?);
+		resources.push(load(
+			reader,
+			UTF_16LE,
+			cache_resources,
+			key_maker,
+			true)?);
 		i += 1;
 	}
 	Ok(resources)

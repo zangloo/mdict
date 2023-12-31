@@ -10,14 +10,15 @@ pub use crate::error::Result;
 
 #[cfg(test)]
 mod tests {
-	use crate::MDict;
+	use std::borrow::Cow;
+	use crate::MDictBuilder;
 
 	const MDX_V2: &str = "/home/zl/dicts/漢語大字典/漢語大字典 (2010).mdx";
 
 	#[test]
 	fn lookup()
 	{
-		let mut mdx = MDict::from(MDX_V2).unwrap();
+		let mut mdx = MDictBuilder::new(MDX_V2).build().unwrap();
 		let definition = mdx.lookup("无").unwrap();
 		assert!(definition.is_some());
 		let definition = mdx.lookup("無").unwrap();
@@ -29,10 +30,10 @@ mod tests {
 	#[test]
 	fn cache_lookup()
 	{
-		let mut mdx = MDict::builder(MDX_V2)
+		let mut mdx = MDictBuilder::new(MDX_V2)
 			.cache_definition(true)
 			.cache_resource(true)
-			.build()
+			.build_with_key_maker(|key: &Cow<str>, _| key.to_ascii_lowercase())
 			.unwrap();
 		let definition = mdx.lookup("无").unwrap();
 		assert!(definition.is_some());
