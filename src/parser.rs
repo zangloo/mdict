@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::io::{BufReader, Read, Seek, SeekFrom};
@@ -14,7 +13,7 @@ use salsa20::cipher::{KeyIvInit, StreamCipher};
 use salsa20::cipher::crypto_common::Output;
 
 use crate::{Error, mdx::Mdx, Result};
-use crate::mdx::{BlockEntryInfo, KeyBlock, KeyEntry, KeyMaker, Reader, RecordOffset};
+use crate::mdx::{BlockEntryInfo, KeyEntry, KeyMaker, Reader, RecordOffset};
 
 #[derive(Debug)]
 struct KeyBlockHeader {
@@ -355,13 +354,13 @@ fn decode_block(slice: &[u8], compressed_size: usize, decompressed_size: usize) 
 	Ok(decompressed)
 }
 
-fn read_key_blocks(reader: &mut Reader, size: usize, header: &Header,
+fn read_key_entries(reader: &mut Reader, size: usize, header: &Header,
 	entry_infos: Vec<BlockEntryInfo>, key_maker: &dyn KeyMaker, resource: bool)
-	-> Result<Vec<KeyBlock>>
+	-> Result<Vec<KeyEntry>>
 {
 	let data = read_buf(reader, size)?;
 
-	let mut blocks = vec![];
+	let mut entries = vec![];
 	let mut slice = data.as_slice();
 	for info in entry_infos {
 		let decompressed = decode_block(
@@ -369,7 +368,6 @@ fn read_key_blocks(reader: &mut Reader, size: usize, header: &Header,
 		slice = &slice[info.compressed_size..];
 
 		let mut entries_slice = decompressed.as_slice();
-		let mut entries = vec![];
 		while !entries_slice.is_empty() {
 			let (offset, delta) = match header.version {
 				Version::V1 => (BE::read_u32(entries_slice) as usize, 4),
@@ -381,12 +379,10 @@ fn read_key_blocks(reader: &mut Reader, size: usize, header: &Header,
 			entries.push(KeyEntry { offset, text });
 			entries_slice = &entries_slice[idx..];
 		}
-		blocks.push(KeyBlock {
-			entries,
-		});
 	}
+	entries.sort_by(|a, b| a.text.cmp(&b.text));
 
-	Ok(blocks)
+	Ok(entries)
 }
 
 fn read_record_blocks(reader: &mut Reader, header: &Header)
@@ -419,7 +415,7 @@ pub(crate) fn load(mut reader: Reader, default_encoding: &'static Encoding,
 		key_block_header.block_info_size,
 		&header)?;
 
-	let key_blocks = read_key_blocks(
+	let key_entries = read_key_entries(
 		&mut reader,
 		key_block_header.key_block_size,
 		&header,
@@ -437,70 +433,12 @@ pub(crate) fn load(mut reader: Reader, default_encoding: &'static Encoding,
 		encoding: header.encoding,
 		title: header.title,
 		encrypted: header.encrypted,
-		key_blocks,
+		key_entries,
 		records_info,
 		reader,
 		record_block_offset,
 		record_cache: if cache { Some(HashMap::new()) } else { None },
 	})
-}
-
-impl PartialEq<str> for KeyBlock {
-	fn eq(&self, key: &str) -> bool {
-		self.partial_cmp(key)
-			.map_or(false, |o| matches!(o, Ordering::Equal))
-	}
-}
-
-impl PartialOrd<str> for KeyBlock {
-	fn partial_cmp(&self, key: &str) -> Option<Ordering> {
-		if self.entries.first()?.text.as_str() > key {
-			Some(Ordering::Greater)
-		} else if self.entries.last()?.text.as_str() < key {
-			Some(Ordering::Less)
-		} else {
-			Some(Ordering::Equal)
-		}
-	}
-}
-
-impl PartialEq<str> for KeyEntry {
-	fn eq(&self, key: &str) -> bool
-	{
-		self.partial_cmp(key)
-			.map_or(false, |o| matches!(o, Ordering::Equal))
-	}
-}
-
-impl PartialOrd<str> for KeyEntry {
-	fn partial_cmp(&self, key: &str) -> Option<Ordering>
-	{
-		self.text.as_str().partial_cmp(key)
-	}
-}
-
-fn bisect_search<'a, C: ?Sized, T: PartialOrd<C>>(mut slice: &'a [T], key: &C)
-	-> Option<&'a T>
-{
-	while !slice.is_empty() {
-		let len = slice.len();
-		let idx = len >> 1;
-		let current = &slice[idx];
-		match current.partial_cmp(key) {
-			None => break,
-			Some(Ordering::Greater) => slice = &slice[..idx],
-			Some(Ordering::Equal) => return Some(current),
-			Some(Ordering::Less) => {
-				let next = idx + 1;
-				if next >= len {
-					break;
-				} else {
-					slice = &slice[next..]
-				}
-			}
-		}
-	}
-	None
 }
 
 fn record_offset(records_info: &Vec<BlockEntryInfo>, entry: &KeyEntry) -> Option<RecordOffset> {
@@ -555,12 +493,11 @@ fn find_definition(mdx: &mut Mdx, offset: RecordOffset) -> Result<Cow<[u8]>>
 
 pub(crate) fn lookup_record<'a>(mdx: &'a mut Mdx, key: &str) -> Result<Option<Cow<'a, [u8]>>>
 {
-	if let Some(key_block) = bisect_search(&mdx.key_blocks, key) {
-		if let Some(entry) = bisect_search(&key_block.entries, key) {
-			if let Some(offset) = record_offset(&mdx.records_info, entry) {
-				let slice = find_definition(mdx, offset)?;
-				return Ok(Some(slice));
-			}
+	if let Ok(idx) = mdx.key_entries.binary_search_by(|entry| entry.text.as_str().cmp(key)) {
+		let entry = &mdx.key_entries[idx];
+		if let Some(offset) = record_offset(&mdx.records_info, entry) {
+			let slice = find_definition(mdx, offset)?;
+			return Ok(Some(slice));
 		}
 	}
 	Ok(None)

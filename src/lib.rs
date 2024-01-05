@@ -20,6 +20,8 @@ mod tests {
 	fn lookup()
 	{
 		let mut mdx = MDictBuilder::new(MDX_V2).build().unwrap();
+		let definition = mdx.lookup("將進酒").unwrap();
+		assert!(definition.is_none());
 		let definition = mdx.lookup("无").unwrap();
 		assert!(definition.is_some());
 		let definition = mdx.lookup("無").unwrap();
@@ -36,6 +38,8 @@ mod tests {
 			.cache_resource(true)
 			.build_with_key_maker(|key: &Cow<str>, _| key.to_ascii_lowercase())
 			.unwrap();
+		let definition = mdx.lookup("將進酒").unwrap();
+		assert!(definition.is_none());
 		let definition = mdx.lookup("无").unwrap();
 		assert!(definition.is_some());
 		let definition = mdx.lookup("無").unwrap();

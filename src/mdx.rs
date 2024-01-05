@@ -32,16 +32,11 @@ pub struct Mdx {
 	pub(crate) title: String,
 	#[allow(unused)]
 	pub(crate) encrypted: u8,
-	pub(crate) key_blocks: Vec<KeyBlock>,
+	pub(crate) key_entries: Vec<KeyEntry>,
 	pub(crate) records_info: Vec<BlockEntryInfo>,
 	pub(crate) reader: Reader,
 	pub(crate) record_block_offset: u64,
 	pub(crate) record_cache: Option<HashMap<usize, Vec<u8>>>,
-}
-
-#[derive(Debug)]
-pub(crate) struct KeyBlock {
-	pub(crate) entries: Vec<KeyEntry>,
 }
 
 #[derive(Debug)]
